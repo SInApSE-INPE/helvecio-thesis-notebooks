@@ -32,11 +32,39 @@ def to_rgba(data, vmin=0, vmax=20, cmap_name='turbo'):
     rgba = (cmap(norm(data)) * 255).astype('uint8')
     return np.flipud(rgba)
 
-def rgba_to_base64(rgba_array):
-    """Converte array RGBA para string base64 PNG"""
+def rgba_to_base64(rgba_array, quality=75, scale_factor=1.0, format='WEBP'):
+    """Converte array RGBA para string base64 com otimizações de tamanho
+    
+    Parameters:
+    -----------
+    rgba_array : np.ndarray
+        Array RGBA a ser convertido
+    quality : int
+        Qualidade da compressão (1-100). Menor = arquivo menor
+    scale_factor : float
+        Fator de escala da imagem (0.5 = metade da resolução)
+    format : str
+        Formato de imagem: 'WEBP', 'PNG', ou 'JPEG'
+    """
     img = Image.fromarray(rgba_array)
+    
+    # Reduz resolução se necessário
+    if scale_factor != 1.0:
+        new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
+        img = img.resize(new_size, Image.Resampling.LANCZOS)
+    
     buffer = io.BytesIO()
-    img.save(buffer, format='PNG', optimize=True)
+    
+    if format == 'WEBP':
+        img.save(buffer, format='WEBP', quality=quality, method=6)
+    elif format == 'JPEG':
+        # Converte RGBA para RGB para JPEG
+        rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+        rgb_img.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
+        rgb_img.save(buffer, format='JPEG', quality=quality, optimize=True)
+    else:  # PNG
+        img.save(buffer, format='PNG', optimize=True, compress_level=9)
+    
     buffer.seek(0)
     return base64.b64encode(buffer.read()).decode('utf-8')
 
@@ -212,7 +240,7 @@ def load_geojson_for_timestamp(timestamp_str, gsmap_track_dir, imerg_track_dir, 
 
 def process_frame(args):
     """Processa um frame individual - usado para paralelização"""
-    i, gsmap_file, imerg_file, timestamp, vmin, vmax = args
+    i, gsmap_file, imerg_file, timestamp, vmin, vmax, quality, scale_factor, img_format = args
     
     try:
         # Carrega os dados
@@ -223,9 +251,9 @@ def process_frame(args):
         gsm_rgba = to_rgba(gsm_data, vmin, vmax, 'turbo')
         img_rgba = to_rgba(img_data, vmin, vmax, 'turbo')
         
-        # Converte para base64
-        gsmap_b64 = rgba_to_base64(gsm_rgba)
-        imerg_b64 = rgba_to_base64(img_rgba)
+        # Converte para base64 com otimizações
+        gsmap_b64 = rgba_to_base64(gsm_rgba, quality=quality, scale_factor=scale_factor, format=img_format)
+        imerg_b64 = rgba_to_base64(img_rgba, quality=quality, scale_factor=scale_factor, format=img_format)
         
         return {
             'index': i,
@@ -241,7 +269,8 @@ def create_animated_dual_map(gsmap_files, imerg_files, timestamps,
                               output_file="gsmap_imerg_animated.html",
                               extent=[-180, 180, -60, 60], vmin=0, vmax=20, n_workers=None,
                               gsmap_track_dir=None, imerg_track_dir=None,
-                              enable_tracks=False):
+                              enable_tracks=False,
+                              image_quality=65, image_scale=0.75, image_format='WEBP'):
     """
     Cria um HTML interativo com slider temporal para comparar GSMaP e IMERG
     
@@ -267,6 +296,14 @@ def create_animated_dual_map(gsmap_files, imerg_files, timestamps,
         Diretório base dos tracks IMERG (/path/to/geometry/)
     enable_tracks : bool
         Se True, carrega e adiciona camadas GeoJSON de tracks
+    image_quality : int
+        Qualidade de compressão das imagens (1-100). Valores menores = arquivo menor
+        Recomendado: 50-75 para balanço qualidade/tamanho
+    image_scale : float
+        Fator de escala espacial (0.5-1.0). Valores menores = arquivo menor
+        Recomendado: 0.5-0.75 para redução significativa
+    image_format : str
+        Formato das imagens: 'WEBP' (melhor compressão), 'PNG', ou 'JPEG'
     """
     if len(gsmap_files) != len(imerg_files) != len(timestamps):
         raise ValueError("gsmap_files, imerg_files e timestamps devem ter o mesmo tamanho!")
@@ -284,10 +321,12 @@ def create_animated_dual_map(gsmap_files, imerg_files, timestamps,
     print(f"Usando {n_workers} processos paralelos")
     
     # Prepara argumentos para processamento paralelo
-    args_list = [(i, gsmap_files[i], imerg_files[i], timestamps[i], vmin, vmax) for i in range(n_frames)]
+    args_list = [(i, gsmap_files[i], imerg_files[i], timestamps[i], vmin, vmax, 
+                  image_quality, image_scale, image_format) for i in range(n_frames)]
     
     # Processa frames em paralelo
     results = []
+    print(f"Configuração de compressão: formato={image_format}, qualidade={image_quality}, escala={image_scale}")
     with Pool(processes=n_workers) as pool:
         for result in tqdm(pool.imap(process_frame, args_list), total=n_frames, desc="Processando frames"):
             if result is not None:
@@ -859,12 +898,12 @@ def create_animated_dual_map(gsmap_files, imerg_files, timestamps,
             }}
             
             // Adiciona novos overlays
-            gsmapOverlay = L.imageOverlay('data:image/png;base64,' + gsmapImages[currentFrame], bounds, {{
+            gsmapOverlay = L.imageOverlay('data:image/{image_format.lower()};base64,' + gsmapImages[currentFrame], bounds, {{
                 opacity: 0.85,
                 interactive: false
             }}).addTo(map1);
             
-            imergOverlay = L.imageOverlay('data:image/png;base64,' + imergImages[currentFrame], bounds, {{
+            imergOverlay = L.imageOverlay('data:image/{image_format.lower()};base64,' + imergImages[currentFrame], bounds, {{
                 opacity: 0.85,
                 interactive: false
             }}).addTo(map2);
@@ -944,7 +983,19 @@ def create_animated_dual_map(gsmap_files, imerg_files, timestamps,
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html_template)
     
-    print(f"Arquivo salvo em: {output_file}")
+    # Calcula estatísticas do arquivo
+    file_size = pathlib.Path(output_file).stat().st_size
+    file_size_mb = file_size / (1024 * 1024)
+    avg_frame_size_kb = (file_size / n_frames) / 1024
+    
+    print(f"\n{'='*60}")
+    print(f"Arquivo salvo: {output_file}")
+    print(f"Tamanho total: {file_size_mb:.2f} MB")
+    print(f"Número de frames: {n_frames}")
+    print(f"Tamanho médio por frame: {avg_frame_size_kb:.2f} KB")
+    print(f"Formato: {image_format}, Qualidade: {image_quality}, Escala: {image_scale}")
+    print(f"{'='*60}\n")
+    
     return output_file
 
 
@@ -987,6 +1038,10 @@ if __name__ == "__main__":
         exit(1)
     
     # Cria o HTML animado com todos os frames sincronizados
+    # Configurações otimizadas para reduzir tamanho do arquivo:
+    # - image_quality: 50-75 (padrão 65) - menor = arquivo menor
+    # - image_scale: 0.5-1.0 (padrão 0.75) - menor = arquivo menor
+    # - image_format: 'WEBP' (melhor), 'PNG', ou 'JPEG'
     create_animated_dual_map(
         gsmap_synced,
         imerg_synced,
@@ -995,5 +1050,8 @@ if __name__ == "__main__":
         extent=[-180, 180, -60, 60],
         vmin=0, 
         vmax=20,
-        n_workers=None  # None = usa cpu_count()-1, ou especifique um número
+        n_workers=None,  # None = usa cpu_count()-1, ou especifique um número
+        image_quality=50,  # Ajuste 50-80 para balancear qualidade/tamanho
+        image_scale=1,  # Ajuste 0.5-1.0 para balancear resolução/tamanho
+        image_format='WEBP'  # WEBP oferece melhor compressão que PNG
     )
