@@ -163,7 +163,7 @@ def countSystemsArea(df, ax1=None, dpi=120):
     #     df['duration'] = df['duration'] + 60
     df_plot = df.copy()
     # Convert to hours
-    df_plot['duration'] = df_plot['duration'] / 60
+    # df_plot['duration'] = df_plot['duration'] / 60
     df_plot['mean_size'] = df_plot['mean_size'] / (0.1 * 0.1)  # Convertendo de pixels para km²
     df_plot['std_size'] = df_plot['std_size'] / (0.1 * 0.1)    # Convertendo de pixels para km²
     lowest_duration = df_plot[df_plot['duration'] <= 24]
@@ -234,26 +234,26 @@ def countSystemsArea(df, ax1=None, dpi=120):
         ax1.axvspan(2.25, lowest_duration['duration'].max() + 0.5, color='lightgreen', alpha=0.2)
     total_eventos = lowest_duration['uid_count'].sum()
     if interval == 1:
-        total_short = df_plot[df_plot['duration'] < 2]['uid_count'].sum()
-        total_long = df_plot[df_plot['duration'] >= 2]['uid_count'].sum()
+        total_short = df_plot[df_plot['duration'] < 3]['uid_count'].sum()
+        total_long = df_plot[df_plot['duration'] >= 3]['uid_count'].sum()
     else:
-        total_short = df_plot[df_plot['duration'] < 2.5]['uid_count'].sum()
-        total_long = df_plot[df_plot['duration'] >= 2.5]['uid_count'].sum()
+        total_short = df_plot[df_plot['duration'] < 3]['uid_count'].sum()
+        total_long = df_plot[df_plot['duration'] >= 3]['uid_count'].sum()
     perc_short = (total_short / total_eventos) * 100 if total_eventos > 0 else 0
     perc_long = (total_long / total_eventos) * 100 if total_eventos > 0 else 0
     bbox_props = dict(boxstyle='square', fc='white', ec='black', alpha=0.9)
 
     # Configure {} positions
     if interval == 1:
-        weigh = 3
-        weigh2 = 25.5
-        position1 = (0.054, 1.04)
-        position2 = (0.555, 1.04)
+        weigh = 2.5
+        weigh2 = 26
+        position1 = (0.046, 1.04)
+        position2 = (0.548, 1.04)
     else:
-        weigh = 3
-        weigh2 = 25.5
-        position1 = (0.055, 1.04)
-        position2 = (0.555, 1.04)
+        weigh = 2.5
+        weigh2 = 26
+        position1 = (0.046, 1.04)
+        position2 = (0.548, 1.04)
 
     total_short = f'{total_short:,}'.replace('.', ',')
     ax1.annotate(f'{perc_short:.1f}% < 3H - Total: {total_short}',
@@ -272,7 +272,7 @@ def countSystemsArea(df, ax1=None, dpi=120):
                                  lw=1.5, color='black'))
     count_largest = int(largest_duration['uid_count'].sum())
     perc_largest = (count_largest / total_eventos) * 100 if total_eventos > 0 else 0
-    ax1.set_xlim(-0.5, lowest_duration['duration'].max() + 0.5)
+    ax1.set_xlim(0, lowest_duration['duration'].max() + 0.5)
     ax1.set_xlabel('Duration (hours)', fontsize=12)
     count_largest = f'{count_largest:,}'.replace('.', ',')
     ax1.annotate(f'Number of PS with Duration > 24H = {count_largest} ({perc_largest:.2f}%)',
